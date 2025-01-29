@@ -1,12 +1,15 @@
-from datetime import datetime
+from flask import request, jsonify
+from datetime import datetime, timedelta
 from flask import Flask, jsonify, request
 from flask_sqlalchemy import SQLAlchemy
 import jwt
-import datetime
 from functools import wraps
+from flask_cors import CORS  # Import CORS
 
-# Inicialización de la aplicación y la base de datos
 app = Flask(__name__)
+
+# Enable CORS for all routes
+CORS(app)
 
 # Configuración de la base de datos y JWT
 app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///app2.db'
@@ -39,14 +42,14 @@ class Category(db.Model):
 class Task(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     name = db.Column(db.String(100), nullable=False)
-    description = db.Column(db.String(200), nullable=False)
-    creation_date = db.Column(db.DateTime, default=datetime)
+    description = db.Column(db.String(255))
+    # Make sure default is correct
+    creation_date = db.Column(db.DateTime, default=datetime.utcnow)
     finishing_date = db.Column(db.DateTime, nullable=True)
-    status = db.Column(db.String(50), nullable=False)
+    status = db.Column(db.String(50), nullable=False, default='pending')
     user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
     category_id = db.Column(db.Integer, db.ForeignKey(
         'category.id'), nullable=False)
-    user = db.relationship('User', backref=db.backref('tasks', lazy=True))
 
 
 # Crear las tablas en la base de datos
@@ -118,7 +121,7 @@ def login():
         return jsonify({'message': 'Invalid credentials!'}), 401
 
     # Crear el token JWT con expiración de 30 minutos
-    token = jwt.encode({'user': user.username, 'exp': datetime.datetime.utcnow() + datetime.timedelta(minutes=30), 'still_valid': True},
+    token = jwt.encode({'user': user.username, 'exp': datetime.utcnow() + timedelta(minutes=30), 'still_valid': True},
                        app.config['SECRET_KEY'], algorithm="HS256")
     return jsonify({'token': token})
 
@@ -179,23 +182,43 @@ def get_tasks():
 @app.route('/tasks', methods=['POST'])
 @token_required
 def create_task():
-    data = request.json
-    user_from_token = jwt.decode(request.headers['Authorization'].split(
-        " ")[1], app.config['SECRET_KEY'], algorithms=["HS256"])['user']
-    user = User.query.filter_by(username=user_from_token).first()
-    if 'finishing_date' in data and datetime.fromisoformat(data['finishing_date']) < datetime.now():
-        return jsonify({'message': 'Finishing date cannot be in the past!'}), 400
-    new_task = Task(
-        name=data['name'],
-        description=data['description'],
-        status=data['status'],
-        user_id=user.id,
-        category_id=data['category_id'],
-        finishing_date=data.get('finishing_date')
-    )
-    db.session.add(new_task)
-    db.session.commit()
-    return jsonify({'message': 'Task created successfully!'}), 201
+    try:
+        # Get data from the request
+        data = request.get_json()
+        user_from_token = jwt.decode(request.headers['Authorization'].split(
+            " ")[1], app.config['SECRET_KEY'], algorithms=["HS256"])['user']
+        user = User.query.filter_by(username=user_from_token).first()
+
+        # Convert finishing_date from string to datetime if it's present
+        if 'finishing_date' in data:
+            finishing_date_str = data['finishing_date']
+            # Ensure the finishing_date is a valid datetime string and convert
+            finishing_date = datetime.fromisoformat(
+                finishing_date_str)  # Converts string to datetime
+        else:
+            finishing_date = None  # If there's no finishing date, it stays as None
+
+        # Create the new task
+        new_task = Task(
+            name=data['name'],
+            description=data['description'],
+            creation_date=datetime.utcnow(),  # Using the current UTC time
+            finishing_date=finishing_date,
+            status=data['status'],
+            user_id=user.id,
+            category_id=data['category_id']
+        )
+
+        # Add the task to the session and commit
+        db.session.add(new_task)
+        db.session.commit()
+
+        # Respond with a success message or task details
+        return jsonify({'message': 'Task created successfully', 'task': new_task.id}), 201
+
+    except Exception as e:
+        # Handle any errors
+        return jsonify({'error': str(e)}), 400
 
 
 @app.route('/tasks/<int:task_id>', methods=['GET'])
