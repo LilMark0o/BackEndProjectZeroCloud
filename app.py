@@ -1,3 +1,5 @@
+import os
+from flask import send_from_directory
 from flask import request, jsonify
 from datetime import datetime, timedelta
 from flask import Flask, jsonify, request
@@ -121,7 +123,7 @@ def login():
         return jsonify({'message': 'Invalid credentials!'}), 401
 
     # Crear el token JWT con expiración de 30 minutos
-    token = jwt.encode({'user': user.username, 'exp': datetime.utcnow() + timedelta(minutes=30), 'still_valid': True},
+    token = jwt.encode({'user': user.username, 'exp': datetime.utcnow() + timedelta(minutes=50000), 'still_valid': True},
                        app.config['SECRET_KEY'], algorithm="HS256")
     return jsonify({'token': token})
 
@@ -271,6 +273,58 @@ def delete_task(task_id):
     db.session.delete(task)
     db.session.commit()
     return jsonify({'message': 'Task deleted successfully!'}), 200
+
+
+UPLOAD_FOLDER = 'uploads/images'
+app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
+
+# Make sure the folder exists
+os.makedirs(UPLOAD_FOLDER, exist_ok=True)
+
+
+@app.route('/upload_image', methods=['POST'])
+@token_required
+def upload_image():
+    if 'image' not in request.files:
+        return jsonify({'message': 'No image part'}), 400
+
+    image = request.files['image']
+
+    if image.filename == '':
+        return jsonify({'message': 'No selected file'}), 400
+
+    # Save the image to the upload folder with its original filename
+    user_from_token = jwt.decode(request.headers['Authorization'].split(
+        " ")[1], app.config['SECRET_KEY'], algorithms=["HS256"])['user']
+    user = User.query.filter_by(username=user_from_token).first()
+
+    filename = user.username + '.' + image.filename.split('.')[-1]
+    image.save(os.path.join(app.config['UPLOAD_FOLDER'], filename))
+
+    return jsonify({'message': f'Image {filename} uploaded successfully!'}), 201
+
+
+# Route to get an image
+@app.route('/get_image', methods=['GET'])
+@token_required
+def get_image():
+    user_from_token = jwt.decode(request.headers['Authorization'].split(
+        " ")[1], app.config['SECRET_KEY'], algorithms=["HS256"])['user']
+    user = User.query.filter_by(username=user_from_token).first()
+    filename = None
+    for file in os.listdir(app.config['UPLOAD_FOLDER']):
+        fileNameItem = file.rsplit(".", 1)[0]
+        if user.username == fileNameItem:
+            filename = file
+            break
+    if filename is None:
+        return send_from_directory(app.config['UPLOAD_FOLDER'], 'default_normal_image.png')
+    else:
+        try:
+            # Serve the image from the uploads folder
+            return send_from_directory(app.config['UPLOAD_FOLDER'], filename)
+        except FileNotFoundError:
+            return send_from_directory(app.config['UPLOAD_FOLDER'], 'default_normal_image.png')
 
 
 if __name__ == '__main__':
