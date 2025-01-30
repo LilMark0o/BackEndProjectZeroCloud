@@ -178,6 +178,7 @@ def get_tasks():
         'status': task.status,
         'creation_date': task.creation_date,
         'finishing_date': task.finishing_date,
+        'category': task.category.name
     } for task in tasks])
 
 
@@ -255,7 +256,11 @@ def update_task(task_id):
     task.name = data.get('name', task.name)
     task.description = data.get('description', task.description)
     task.status = data.get('status', task.status)
-    task.finishing_date = data.get('finishing_date', task.finishing_date)
+    finishing_date_raw = data.get('finishing_date', task.finishing_date)
+    if finishing_date_raw:
+        finishing_date = datetime.fromisoformat(
+            finishing_date_raw)  # Converts string to datetime
+    task.finishing_date = finishing_date
     task.category_id = data.get('category_id', task.category_id)
     db.session.commit()
     return jsonify({'message': 'Task updated successfully!'}), 200
